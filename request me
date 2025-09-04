@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>DJ Event App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #0d1117;
+            color: #c9d1d9;
+        }
+        .container {
+            max-width: 900px;
+            margin: auto;
+            padding: 24px;
+        }
+        .message-box {
+            background-color: #24292f;
+            border-radius: 8px;
+            padding: 16px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100">
+    <div class="container">
+        <header class="text-center my-8">
+            <h1 class="text-4xl font-bold text-blue-400">DJ Event App</h1>
+            <p class="text-gray-400">Send a note, photo, or song request!</p>
+            <p id="user-id-display" class="mt-2 text-sm text-gray-500"></p>
+        </header>
+
+        <main class="grid grid-cols-1 md:grid-cols-2 gap-8">
+            <!-- Input Form Section -->
+            <section class="p-6 bg-gray-800 rounded-lg shadow-xl">
+                <h2 class="text-2xl font-semibold mb-4 border-b border-gray-700 pb-2">Submit a Request</h2>
+                <form id="request-form" class="space-y-4">
+                    <div>
+                        <label for="type" class="block text-sm font-medium text-gray-400">Request Type</label>
+                        <select id="type" name="type" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 text-white">
+                            <option value="song">Song Request</option>
+                            <option value="message">Message/Note</option>
+                            <option value="photo">Photo</option>
+                        </select>
+                    </div>
+                    
+                    <div id="song-input" class="hidden">
+                        <label for="song-name" class="block text-sm font-medium text-gray-400">Song Name</label>
+                        <input type="text" id="song-name" name="song-name" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 text-white">
+                    </div>
+
+                    <div id="message-input" class="hidden">
+                        <label for="message-content" class="block text-sm font-medium text-gray-400">Your Message</label>
+                        <textarea id="message-content" name="message-content" rows="4" class="mt-1 block w-full bg-gray-700 border-gray-600 rounded-md shadow-sm p-2 text-white"></textarea>
+                    </div>
+
+                    <div id="photo-input" class="hidden">
+                        <label for="photo-file" class="block text-sm font-medium text-gray-400">Upload Photo</label>
+                        <input type="file" id="photo-file" name="photo-file" accept="image/*" class="mt-1 block w-full text-white">
+                    </div>
+
+                    <div>
+                        <label class="block text-sm font-medium text-gray-400">Priority</label>
+                        <div class="mt-1 flex items-center space-x-4">
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="priority" value="standard" class="form-radio text-blue-500" checked>
+                                <span class="ml-2 text-gray-300">Standard (Free)</span>
+                            </label>
+                            <label class="inline-flex items-center">
+                                <input type="radio" name="priority" value="premium" class="form-radio text-yellow-500">
+                                <span class="ml-2 text-gray-300">Premium ($)</span>
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-md transition-colors">
+                        Send to DJ
+                    </button>
+                    <p id="error-message" class="text-sm text-red-400 mt-2 hidden">Please provide a song name, message, or photo.</p>
+                </form>
+            </section>
+
+            <!-- Real-time Feed Section -->
+            <section class="p-6 bg-gray-800 rounded-lg shadow-xl">
+                <h2 class="text-2xl font-semibold mb-4 border-b border-gray-700 pb-2">Live Feed</h2>
+                <div id="feed" class="space-y-4">
+                    <!-- Dynamic content will be loaded here -->
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js";
+        
+        // Use the provided global variables for Firebase configuration.
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // Set log level for debugging
+        setLogLevel('debug');
+
+        // Initialize Firebase
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        
+        let userId = null;
+        let isAuthReady = false;
+
+        // DOM elements
+        const requestForm = document.getElementById('request-form');
+        const typeSelect = document.getElementById('type');
+        const songInputDiv = document.getElementById('song-input');
+        const messageInputDiv = document.getElementById('message-input');
+        const photoInputDiv = document.getElementById('photo-input');
+        const feedContainer = document.getElementById('feed');
+        const userIdDisplay = document.getElementById('user-id-display');
+        const errorMessage = document.getElementById('error-message');
+
+        // Toggle input fields based on selection
+        typeSelect.addEventListener('change', (e) => {
+            songInputDiv.classList.add('hidden');
+            messageInputDiv.classList.add('hidden');
+            photoInputDiv.classList.add('hidden');
+
+            switch (e.target.value) {
+                case 'song':
+                    songInputDiv.classList.remove('hidden');
+                    break;
+                case 'message':
+                    messageInputDiv.classList.remove('hidden');
+                    break;
+                case 'photo':
+                    photoInputDiv.classList.remove('hidden');
+                    break;
+            }
+        });
+
+        // Initial setup to show the song input
+        songInputDiv.classList.remove('hidden');
+
+        // Handle user authentication state
+        onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                userId = user.uid;
+            } else {
+                try {
+                    if (initialAuthToken) {
+                        await signInWithCustomToken(auth, initialAuthToken);
+                        userId = auth.currentUser.uid;
+                    } else {
+                        await signInAnonymously(auth);
+                        userId = auth.currentUser.uid;
+                    }
+                } catch (error) {
+                    console.error("Error signing in:", error);
+                }
+            }
+            if (userId) {
+                userIdDisplay.textContent = `User ID: ${userId}`;
+            }
+            isAuthReady = true;
+            if (isAuthReady) {
+                setupRealtimeFeed();
+            }
+        });
+
+        // Setup real-time listener for the feed
+        const setupRealtimeFeed = () => {
+            const requestsCollection = collection(db, `/artifacts/${appId}/public/data/requests`);
+            const q = query(requestsCollection);
+
+            onSnapshot(q, (snapshot) => {
+                feedContainer.innerHTML = ''; // Clear the feed
+                snapshot.docChanges().forEach((change) => {
+                    const data = change.doc.data();
+                    const docId = change.doc.id;
+                    const element = createFeedElement(data, docId);
+                    if (change.type === "added") {
+                        feedContainer.prepend(element); // Add new items to the top
+                    }
+                });
+            }, (error) => {
+                console.error("Error listening to feed:", error);
+            });
+        };
+
+        // Create HTML element for a feed item
+        const createFeedElement = (data, docId) => {
+            const div = document.createElement('div');
+            div.className = 'p-4 rounded-lg shadow-md';
+            
+            let content = '';
+            if (data.type === 'song') {
+                content = `<p class="text-lg font-bold">🎶 Song Request: ${data.content}</p>`;
+            } else if (data.type === 'message') {
+                content = `<p class="text-lg font-bold">📝 Message:</p><p class="mt-1">${data.content}</p>`;
+            } else if (data.type === 'photo') {
+                content = `<p class="text-lg font-bold">📸 Photo from Guest:</p><img src="${data.content}" alt="Guest photo" class="mt-2 rounded-lg max-w-full h-auto">`;
+            }
+
+            const priorityBadge = data.priority === 'premium' 
+                ? `<span class="bg-yellow-500 text-yellow-900 text-xs font-bold px-2 py-1 rounded-full">Premium</span>` 
+                : `<span class="bg-gray-500 text-gray-900 text-xs font-bold px-2 py-1 rounded-full">Standard</span>`;
+
+            div.innerHTML = `
+                <div class="flex justify-between items-center mb-2">
+                    <p class="text-sm text-gray-400">User ID: ${data.userId}</p>
+                    ${priorityBadge}
+                </div>
+                ${content}
+            `;
+            return div;
+        };
+
+        // Handle form submission
+        requestForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            errorMessage.classList.add('hidden');
+            
+            if (!isAuthReady || !userId) {
+                console.error("Authentication not ready. Cannot submit data.");
+                return;
+            }
+
+            const type = document.getElementById('type').value;
+            let content = '';
+
+            if (type === 'song') {
+                content = document.getElementById('song-name').value.trim();
+                if (!content) {
+                    errorMessage.textContent = 'Please enter a song name.';
+                    errorMessage.classList.remove('hidden');
+                    return;
+                }
+            } else if (type === 'message') {
+                content = document.getElementById('message-content').value.trim();
+                if (!content) {
+                    errorMessage.textContent = 'Please enter a message.';
+                    errorMessage.classList.remove('hidden');
+                    return;
+                }
+            } else if (type === 'photo') {
+                const fileInput = document.getElementById('photo-file');
+                if (fileInput.files.length > 0) {
+                    const file = fileInput.files[0];
+                    const reader = new FileReader();
+                    reader.onload = async (event) => {
+                        content = event.target.result;
+                        await submitData(type, content);
+                    };
+                    reader.readAsDataURL(file);
+                    return; // Return to wait for file reading
+                } else {
+                    errorMessage.textContent = 'Please select a photo.';
+                    errorMessage.classList.remove('hidden');
+                    return;
+                }
+            }
+            await submitData(type, content);
+        });
+
+        // Function to add data to Firestore
+        const submitData = async (type, content) => {
+            const priority = document.querySelector('input[name="priority"]:checked').value;
+            const docData = {
+                userId: userId,
+                type: type,
+                content: content,
+                priority: priority,
+                timestamp: serverTimestamp()
+            };
+            
+            try {
+                await addDoc(collection(db, `/artifacts/${appId}/public/data/requests`), docData);
+                requestForm.reset();
+                document.getElementById('song-name').value = '';
+                document.getElementById('message-content').value = '';
+                // The select field change event will reset the inputs.
+            } catch (error) {
+                console.error("Error writing document:", error);
+            }
+        };
+
+    </script>
+</body>
+</html>
